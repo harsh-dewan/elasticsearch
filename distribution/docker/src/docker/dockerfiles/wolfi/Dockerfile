@@ -24,7 +24,7 @@
 # Extract Elasticsearch artifact
 ################################################################################
 
-FROM docker.elastic.co/wolfi/chainguard-base:latest@sha256:2a601e3db11b58d6d5bfedb651c513e46556e231a56f437990ec4f0248f2207b AS builder
+FROM docker.elastic.co/wolfi/chainguard-base:latest@sha256:9ded4d2364e7f263cada56b0b9ca3ef643e8dac958a79df3d18c2a9f0a33fbc7 AS builder
 
 # Install required packages to extract the Elasticsearch distribution
 RUN <%= retry.loop(package_manager, "export DEBIAN_FRONTEND=noninteractive && ${package_manager} update && ${package_manager} update && ${package_manager} add --no-cache curl") %>
@@ -79,7 +79,7 @@ RUN sed -i -e 's/ES_DISTRIBUTION_TYPE=tar/ES_DISTRIBUTION_TYPE=docker/' bin/elas
 # Add entrypoint
 ################################################################################
 
-FROM docker.elastic.co/wolfi/chainguard-base:latest@sha256:2a601e3db11b58d6d5bfedb651c513e46556e231a56f437990ec4f0248f2207b
+FROM docker.elastic.co/wolfi/chainguard-base:latest@sha256:9ded4d2364e7f263cada56b0b9ca3ef643e8dac958a79df3d18c2a9f0a33fbc7
 
 RUN <%= retry.loop(package_manager,
           "export DEBIAN_FRONTEND=noninteractive && \n" +
