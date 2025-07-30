@@ -7,16 +7,25 @@
 
 package org.elasticsearch.plugin.gpu;
 
+import org.apache.lucene.tests.util.LuceneTestCase;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.vectors.KnnSearchBuilder;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.xpack.gpu.GPUPlugin;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 
+@LuceneTestCase.SuppressCodecs("*") // use our custom codec
 public class GPUIndexIT extends ESIntegTestCase {
 
     @Override
@@ -25,40 +34,56 @@ public class GPUIndexIT extends ESIntegTestCase {
     }
 
     public void testBasic() {
+        final int dims = randomIntBetween(4, 128);
+        final int[] numDocs = new int[] { randomIntBetween(1, 100), 1, 2, randomIntBetween(1, 100) };
+
         var settings = Settings.builder().put(indexSettings());
         settings.put("index.number_of_shards", 1);
-        settings.put("index.vectors.indexing.use_gpu", "true");
-        assertAcked(prepareCreate("foo-index").setSettings(settings.build()).setMapping("""
-                "properties": {
-                  "my_vector": {
-                    "type": "dense_vector",
-                    "dims": 5,
-                    "similarity": "l2_norm",
-                    "index_options": {
-                      "type": "hnsw"
+        settings.put("index.vectors.indexing.use_gpu", true);
+        assertAcked(prepareCreate("foo-index").setSettings(settings.build()).setMapping(String.format(Locale.ROOT, """
+                {
+                  "properties": {
+                    "my_vector": {
+                      "type": "dense_vector",
+                      "dims": %d,
+                      "similarity": "l2_norm",
+                      "index_options": {
+                        "type": "hnsw"
+                      }
                     }
                   }
                 }
-            """));
+            """, dims)));
         ensureGreen();
 
-        prepareIndex("foo-index").setId("1").setSource("my_vector", new float[] { 230.0f, 300.33f, -34.8988f, 15.555f, -200.0f }).get();
-
-        // TODO: add more docs...
-
-        ensureGreen();
+        for (int i = 0; i < numDocs.length; i++) {
+            BulkRequestBuilder bulkRequest = client().prepareBulk();
+            for (int j = 0; j < numDocs[i]; j++) {
+                String id = String.valueOf(i * 100 + j);
+                bulkRequest.add(prepareIndex("foo-index").setId(id).setSource("my_vector", randomFloatVector(dims)));
+            }
+            BulkResponse bulkResponse = bulkRequest.get();
+            assertFalse("Bulk request failed: " + bulkResponse.buildFailureMessage(), bulkResponse.hasFailures());
+        }
         refresh();
 
-        // TODO: do some basic search
-        // var knn = new KnnSearchBuilder("nested.vector", new float[] { -0.5f, 90.0f, -10f, 14.8f, -156.0f }, 2, 3, null, null);
-        // var request = prepareSearch("test").addFetchField("name").setKnnSearch(List.of(knn));
-        // assertNoFailuresAndResponse(request, response -> {
-        // assertHitCount(response, 2);
-        // assertEquals("2", response.getHits().getHits()[0].getId());
-        // assertEquals("cat", response.getHits().getHits()[0].field("name").getValue());
-        // assertEquals("3", response.getHits().getHits()[1].getId());
-        // assertEquals("rat", response.getHits().getHits()[1].field("name").getValue());
-        // });
-        // }
+        float[] queryVector = randomFloatVector(dims);
+        int k = randomIntBetween(1, 10);
+        int numCandidates = k * 10;
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+        sourceBuilder.knnSearch(List.of(new KnnSearchBuilder("my_vector", queryVector, k, numCandidates, null, null)));
+        SearchRequest searchRequest = new SearchRequest("foo-index");
+        searchRequest.source(sourceBuilder);
+        SearchResponse searchResponse = client().search(searchRequest).actionGet();
+        assertEquals("Search should execute successfully on all shards", 0, searchResponse.getFailedShards());
+        assertEquals("Expected k hits to be returned", k, searchResponse.getHits().getHits().length);
+    }
+
+    private static float[] randomFloatVector(int dims) {
+        float[] vector = new float[dims];
+        for (int i = 0; i < dims; i++) {
+            vector[i] = randomFloat();
+        }
+        return vector;
     }
 }
